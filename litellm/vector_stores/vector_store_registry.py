@@ -18,8 +18,13 @@ else:
 
 
 class VectorStoreRegistry:
-    def __init__(self, vector_stores: List[LiteLLM_ManagedVectorStore] = []):
-        self.vector_stores: List[LiteLLM_ManagedVectorStore] = vector_stores
+    def __init__(
+        self, vector_stores: Optional[List[LiteLLM_ManagedVectorStore]] = None
+    ):
+        # avoid shared mutable state across instances when no vector stores are provided
+        self.vector_stores: List[LiteLLM_ManagedVectorStore] = (
+            vector_stores if vector_stores is not None else []
+        )
         self.vector_store_ids_to_vector_store_map: Dict[
             str, LiteLLM_ManagedVectorStore
         ] = {}
@@ -64,7 +69,9 @@ class VectorStoreRegistry:
         return vector_store_ids
 
     def get_and_pop_recognised_vector_store_tools(
-        self, tools: Optional[List[Dict]] = None, vector_store_ids: List[str] = []
+        self,
+        tools: Optional[List[Dict]] = None,
+        vector_store_ids: Optional[List[str]] = None,
     ) -> List[str]:
         """
         Returns and pops the vector store ids from the tool calls
@@ -78,6 +85,9 @@ class VectorStoreRegistry:
         Returns:
             The vector store ids that were popped
         """
+        if vector_store_ids is None:
+            vector_store_ids = []
+
         if tools:
             tools_to_remove: List[int] = []
             for i, tool in enumerate(tools):
@@ -158,11 +168,16 @@ class VectorStoreRegistry:
         return vector_stores_to_run
 
     def _get_vector_store_ids_from_tool_calls(
-        self, tools: Optional[List[Dict]] = None, vector_store_ids: List[str] = []
+        self,
+        tools: Optional[List[Dict]] = None,
+        vector_store_ids: Optional[List[str]] = None,
     ) -> List[str]:
         """
         Returns the vector store ids from the tool calls
         """
+        if vector_store_ids is None:
+            vector_store_ids = []
+
         if tools:
             for tool in tools:
                 if "vector_store_ids" in tool:
