@@ -104,7 +104,7 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
         try:
             # Get model info first for conversion
             model_group_info: Optional[ModelGroupInfo] = (
-                self.llm_router.get_model_group_info(model_group=model)
+                self.llm_router._cached_get_model_group_info(model_group=model)
             )
 
             weight: float = 1

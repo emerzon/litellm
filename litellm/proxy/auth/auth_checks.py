@@ -123,8 +123,8 @@ def _is_model_cost_zero(
     
     for model_name in model_list:
         try:
-            # Use router's get_model_group_info method directly for better reliability
-            model_group_info = llm_router.get_model_group_info(model_group=model_name)
+            # Use router's cached get_model_group_info method directly for better reliability
+            model_group_info = llm_router._cached_get_model_group_info(model_group=model_name)
             
             if model_group_info is None:
                 # Model not found or no pricing info available

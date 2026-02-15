@@ -9781,7 +9781,7 @@ def _get_model_group_info(
         if model_group is not None and model_group != model:
             continue
 
-        _model_group_info = llm_router.get_model_group_info(model_group=model)
+        _model_group_info = llm_router._cached_get_model_group_info(model_group=model)
 
         if _model_group_info is not None:
             model_groups.append(ModelGroupInfoProxy(**_model_group_info.model_dump()))
