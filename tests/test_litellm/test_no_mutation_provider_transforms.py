@@ -68,6 +68,9 @@ def test_anthropic_translate_system_message_multiple_system_messages():
     assert len(filtered_messages) == 2, "Should return two non-system messages"
 
     # Verify content and order of extracted system messages
+    assert len(system_message_list) >= 2, "Should have at least 2 system messages"
+    assert "text" in system_message_list[0], "System message should have 'text' key"
+    assert "text" in system_message_list[1], "System message should have 'text' key"
     assert system_message_list[0]["text"] == "System message 1", "First system message content should match"
     assert system_message_list[1]["text"] == "System message 2", "Second system message content should match"
 

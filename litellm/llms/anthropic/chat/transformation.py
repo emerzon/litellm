@@ -975,7 +975,7 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
         self, messages: List[AllMessageValues]
     ) -> Tuple[List[AllMessageValues], List[AnthropicSystemMessageContent]]:
         """
-        Translate system message to anthropic format.
+        Extracts and transforms system messages into Anthropic format.
 
         Extracts system messages and returns them separately without mutating the input list.
         Filters out system messages containing x-anthropic-billing-header metadata.
