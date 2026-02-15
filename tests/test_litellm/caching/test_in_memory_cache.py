@@ -199,3 +199,34 @@ def test_in_memory_cache_heap_size_staus_bounded():
 
     # Expiration heap should only have 1 entry
     assert len(in_memory_cache.expiration_heap) == 1
+
+
+def test_in_memory_cache_heap_bounded_on_expired_key_refresh():
+    """
+    Test that expiration_heap stays bounded when repeatedly setting the same key AFTER expiry.
+    
+    This is a regression test for the issue where heap grows unbounded with repeated 
+    expired-key refreshes due to stale heap entries accumulating.
+    
+    Scenario:
+    - Large max_size_in_memory (100000) so eviction doesn't trigger
+    - Single hot key that's repeatedly set after expiring
+    - Verifies heap doesn't grow linearly with writes
+    """
+    in_memory_cache = InMemoryCache(max_size_in_memory=100000, default_ttl=0.01)
+    
+    # Repeatedly set the same key after it expires
+    for i in range(1000):
+        in_memory_cache.set_cache(key='hot_key', value=f'value_{i}', ttl=0.0001)
+        time.sleep(0.00011)  # Wait for key to expire before next set
+    
+    # Cache should only have 1 key
+    assert len(in_memory_cache.cache_dict) == 1
+    assert len(in_memory_cache.ttl_dict) == 1
+    
+    # Heap should be bounded (not 1000), typically 1-2 entries due to compaction
+    # Allow some slack for timing variations
+    assert len(in_memory_cache.expiration_heap) <= 5, (
+        f"Heap size {len(in_memory_cache.expiration_heap)} should be bounded, "
+        f"not grow linearly with expired-key refreshes"
+    )
