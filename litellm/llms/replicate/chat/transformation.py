@@ -181,13 +181,18 @@ class ReplicateConfig(BaseConfig):
 
         # Work on a copy to avoid mutating caller's list
         messages_for_prompt = list(messages)
-        
+
         if supports_sys_prompt:
+            # Find and extract the first system message
+            system_message_index = None
             for i in range(len(messages_for_prompt)):
                 if messages_for_prompt[i]["role"] == "system":
-                    first_sys_message = messages_for_prompt.pop(i)
-                    system_prompt = convert_content_list_to_str(first_sys_message)
+                    system_message_index = i
                     break
+
+            if system_message_index is not None:
+                first_sys_message = messages_for_prompt.pop(system_message_index)
+                system_prompt = convert_content_list_to_str(first_sys_message)
 
         if model in litellm.custom_prompt_dict:
             # check if the model has a registered custom prompt

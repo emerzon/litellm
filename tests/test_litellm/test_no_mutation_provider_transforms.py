@@ -1,7 +1,6 @@
 """
 Test that provider transformation helpers do not mutate caller-owned message lists.
 
-Issue: https://github.com/BerriAI/litellm/issues/XXXXX
 Multiple provider transform helpers mutate caller-owned messages lists in place,
 which can surprise direct/internal callers that reuse the same list object across calls.
 """
@@ -67,6 +66,14 @@ def test_anthropic_translate_system_message_multiple_system_messages():
     # Verify correct extraction
     assert len(system_message_list) == 2, "Should extract two system messages"
     assert len(filtered_messages) == 2, "Should return two non-system messages"
+
+    # Verify content and order of extracted system messages
+    assert system_message_list[0]["text"] == "System message 1", "First system message content should match"
+    assert system_message_list[1]["text"] == "System message 2", "Second system message content should match"
+
+    # Verify remaining messages
+    assert filtered_messages[0]["role"] == "user", "First remaining message should be user"
+    assert filtered_messages[1]["role"] == "assistant", "Second remaining message should be assistant"
 
 
 def test_bedrock_transform_system_message_does_not_mutate_input():
