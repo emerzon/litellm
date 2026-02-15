@@ -49,7 +49,7 @@ class InMemoryCache(BaseCache):
         self.cache_dict: dict = {}
         self.ttl_dict: dict = {}
         self.expiration_heap: list[tuple[float, str]] = []
-        
+
         # Thread-safety: Global lock for cache structure modifications
         self._cache_lock = threading.Lock()
         # Per-key locks for atomic increment operations
