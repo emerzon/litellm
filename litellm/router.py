@@ -537,7 +537,7 @@ class Router:
         )  # dict to store success_calls  made to each model
         self.previous_models: List = (
             []
-        )  # list to store failed calls (passed in as metadata to next call)
+        )  # deprecated: previously stored failed calls, now stored per-request in metadata
 
         # make Router.chat.completions.create compatible for openai.chat.completions.create
         default_litellm_params = default_litellm_params or {}
@@ -5700,7 +5700,10 @@ class Router:
 
     def log_retry(self, kwargs: dict, e: Exception) -> dict:
         """
-        When a retry or fallback happens, log the details of the just failed model call - similar to Sentry breadcrumbing
+        When a retry or fallback happens, log the details of the just failed model call - similar to Sentry breadcrumbing.
+        
+        Each request maintains its own independent previous_models list in kwargs[metadata]["previous_models"],
+        capped at 3 entries per request to prevent unbounded growth.
         """
         try:
             _metadata_var = (
