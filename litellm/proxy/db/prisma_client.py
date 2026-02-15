@@ -9,7 +9,7 @@ import subprocess
 import time
 import urllib
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Union
 
 from litellm._logging import verbose_proxy_logger
@@ -304,7 +304,7 @@ class PrismaWrapper:
         async with self._reconnection_lock:
             try:
                 await self.recreate_prisma_client(new_db_url)
-                self._last_refresh_time = datetime.utcnow()
+                self._last_refresh_time = datetime.now(timezone.utc)
                 verbose_proxy_logger.info(
                     "Background RDS IAM token refresh completed successfully. "
                     "New token valid for ~15 minutes."
@@ -351,7 +351,7 @@ class PrismaWrapper:
                         # We detect this by trying to get the running loop - if it succeeds,
                         # we're in the same thread; if it raises RuntimeError, we're in a different thread
                         try:
-                            running_loop = asyncio.get_running_loop()
+                            asyncio.get_running_loop()
                             # We successfully got the running loop, meaning we're in the same thread
                             # Schedule refresh as a background task without blocking
                             verbose_proxy_logger.warning(
