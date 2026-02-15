@@ -90,6 +90,12 @@ class Scheduler:
             else:
                 return False
 
+        # Healthy deployments available - remove request from queue and allow to proceed
+        # Find and remove the specific request from the queue
+        filtered_queue = [item for item in queue if item[1] != id]
+        heapq.heapify(filtered_queue)  # restore heap invariant after filtering
+        await self.save_queue(queue=filtered_queue, model_name=model_name)
+        print_verbose(f"Removed request {id} from queue (healthy deployments available)")
         return True
 
     async def remove_request(self, request_id: str, model_name: str) -> None:

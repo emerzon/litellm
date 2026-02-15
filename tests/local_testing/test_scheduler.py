@@ -155,3 +155,41 @@ async def test_scheduler_queue_cleanup_on_timeout():
 
     # Verify remaining items are in correct priority order (0 should be first)
     assert queue_after[0][1] == "req-0", "Expected req-0 (priority 0) to be at front"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_poll_removes_request_when_healthy():
+    """
+    Test that poll() removes the request from queue when health_deployments is non-empty.
+    
+    Bug: When health_deployments has items (healthy state), poll() returns True
+    but doesn't remove the request from the queue, causing stale entries to accumulate.
+    
+    Expected: If poll() returns True (request allowed to proceed), the request
+    should be removed from the queue regardless of health_deployments state.
+    """
+    scheduler = Scheduler(polling_interval=0.001)
+    model_name = "gpt"
+
+    # Add a request to the queue
+    item = FlowItem(priority=10, request_id="req1", model_name=model_name)
+    await scheduler.add_request(item)
+
+    # Verify request is in queue
+    queue_before = await scheduler.get_queue(model_name=model_name)
+    assert len(queue_before) == 1, f"Expected 1 item in queue before poll, got {len(queue_before)}"
+    assert queue_before[0][1] == "req1", "Expected req1 to be in queue"
+
+    # Poll with healthy deployments (this is the bug scenario)
+    ok = await scheduler.poll(
+        id=item.request_id,
+        model_name=model_name,
+        health_deployments=["healthy"],
+    )
+
+    # Verify poll returned True (request allowed to proceed)
+    assert ok is True, "Expected poll to return True with healthy deployments"
+
+    # Verify request was removed from queue after successful poll
+    queue_after = await scheduler.get_queue(model_name=model_name)
+    assert len(queue_after) == 0, f"Expected queue to be empty after poll, got {len(queue_after)} items: {queue_after}"
