@@ -1700,7 +1700,7 @@ def test_translate_system_message_skips_empty_string_content():
         {"role": "user", "content": "Hello"},
     ]
 
-    result = config.translate_system_message(messages)
+    filtered_messages, result = config.translate_system_message(messages)
 
     # Empty system message should produce no anthropic content blocks
     assert len(result) == 0
@@ -1724,7 +1724,7 @@ def test_translate_system_message_skips_empty_list_content():
         {"role": "user", "content": "Hello"},
     ]
 
-    result = config.translate_system_message(messages)
+    filtered_messages, result = config.translate_system_message(messages)
 
     # Only non-empty text blocks should be included
     assert len(result) == 1
@@ -1743,7 +1743,7 @@ def test_translate_system_message_preserves_valid_content():
         {"role": "user", "content": "Hello"},
     ]
 
-    result = config.translate_system_message(messages)
+    filtered_messages, result = config.translate_system_message(messages)
 
     assert len(result) == 1
     assert result[0]["type"] == "text"
@@ -1764,7 +1764,7 @@ def test_translate_system_message_preserves_cache_control():
         {"role": "user", "content": "Hello"},
     ]
 
-    result = config.translate_system_message(messages)
+    filtered_messages, result = config.translate_system_message(messages)
 
     assert len(result) == 1
     assert result[0]["text"] == "Cached content"

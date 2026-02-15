@@ -943,9 +943,11 @@ class AmazonConverseConfig(BaseConfig):
     def _transform_system_message(
         self, messages: List[AllMessageValues], model: Optional[str] = None
     ) -> Tuple[List[AllMessageValues], List[SystemContentBlock]]:
+        # Work on a copy to avoid mutating caller's list
+        messages_copy = list(messages)
         system_prompt_indices = []
         system_content_blocks: List[SystemContentBlock] = []
-        for idx, message in enumerate(messages):
+        for idx, message in enumerate(messages_copy):
             if message["role"] == "system":
                 system_prompt_indices.append(idx)
                 if isinstance(message["content"], str) and message["content"]:
@@ -968,10 +970,11 @@ class AmazonConverseConfig(BaseConfig):
                             )
                             if cache_block:
                                 system_content_blocks.append(cache_block)
+        # Remove system messages from the copy
         if len(system_prompt_indices) > 0:
             for idx in reversed(system_prompt_indices):
-                messages.pop(idx)
-        return messages, system_content_blocks
+                messages_copy.pop(idx)
+        return messages_copy, system_content_blocks
 
     def _transform_inference_params(self, inference_params: dict) -> InferenceConfig:
         if "top_k" in inference_params:

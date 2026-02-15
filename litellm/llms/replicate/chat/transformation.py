@@ -179,12 +179,20 @@ class ReplicateConfig(BaseConfig):
         else:
             supports_sys_prompt = False
 
+        # Work on a copy to avoid mutating caller's list
+        messages_for_prompt = list(messages)
+
         if supports_sys_prompt:
-            for i in range(len(messages)):
-                if messages[i]["role"] == "system":
-                    first_sys_message = messages.pop(i)
-                    system_prompt = convert_content_list_to_str(first_sys_message)
+            # Find and extract the first system message
+            system_message_index = None
+            for i in range(len(messages_for_prompt)):
+                if messages_for_prompt[i]["role"] == "system":
+                    system_message_index = i
                     break
+
+            if system_message_index is not None:
+                first_sys_message = messages_for_prompt.pop(system_message_index)
+                system_prompt = convert_content_list_to_str(first_sys_message)
 
         if model in litellm.custom_prompt_dict:
             # check if the model has a registered custom prompt
@@ -197,10 +205,10 @@ class ReplicateConfig(BaseConfig):
                 final_prompt_value=model_prompt_details.get("final_prompt_value", ""),
                 bos_token=model_prompt_details.get("bos_token", ""),
                 eos_token=model_prompt_details.get("eos_token", ""),
-                messages=messages,
+                messages=messages_for_prompt,
             )
         else:
-            prompt = prompt_factory(model=model, messages=messages)
+            prompt = prompt_factory(model=model, messages=messages_for_prompt)
 
         if prompt is None or not isinstance(prompt, str):
             raise ReplicateError(
