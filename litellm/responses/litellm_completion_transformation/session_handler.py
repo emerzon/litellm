@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any, List, Optional, Union, cast
 
@@ -64,11 +65,21 @@ class ResponsesSessionHandler:
                 Message,
             ]
         ] = []
-        for spend_log in all_spend_logs:
-            chat_completion_message_history = await ResponsesSessionHandler.extend_chat_completion_message_with_spend_log_payload(
+        
+        # Process all spend logs concurrently to reduce latency
+        tasks = [
+            ResponsesSessionHandler.extend_chat_completion_message_with_spend_log_payload(
                 spend_log=spend_log,
-                chat_completion_message_history=chat_completion_message_history,
+                chat_completion_message_history=[],
             )
+            for spend_log in all_spend_logs
+        ]
+        
+        results = await asyncio.gather(*tasks)
+        
+        # Combine results in order to preserve message sequence
+        for messages in results:
+            chat_completion_message_history.extend(messages)
 
         verbose_proxy_logger.debug(
             "chat_completion_message_history %s",
