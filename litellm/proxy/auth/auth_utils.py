@@ -120,11 +120,11 @@ def _allow_model_level_clientside_configurable_parameters(
     if llm_router is None:
         return False
     # check if model is set
-    model_info = llm_router.get_model_group_info(model_group=model)
+    model_info = llm_router._cached_get_model_group_info(model_group=model)
     if model_info is None:
         # check if wildcard model is set
         if model.split("/", 1)[0] in provider_list:
-            model_info = llm_router.get_model_group_info(
+            model_info = llm_router._cached_get_model_group_info(
                 model_group=model.split("/", 1)[0]
             )
 
