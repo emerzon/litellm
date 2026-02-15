@@ -160,7 +160,7 @@ def test_replicate_transform_request_does_not_mutate_input():
 
     # Verify the function still works correctly
     assert isinstance(result, dict), "Should return a dict"
-    assert "prompt" in result, "Result should contain prompt"
+    assert "input" in result, "Result should contain input"
 
 
 def test_replicate_transform_request_without_system_prompt_support():
