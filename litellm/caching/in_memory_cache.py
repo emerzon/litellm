@@ -25,6 +25,11 @@ from .base_cache import BaseCache
 
 
 class InMemoryCache(BaseCache):
+    # Threshold multiplier for triggering heap compaction
+    # When heap size exceeds (active keys * HEAP_COMPACTION_THRESHOLD), stale entries are removed
+    # A value of 2 means compaction triggers when heap has >100% overhead (i.e., >50% stale entries)
+    HEAP_COMPACTION_THRESHOLD = 2
+
     def __init__(
         self,
         max_size_in_memory: Optional[int] = 200,
@@ -191,7 +196,7 @@ class InMemoryCache(BaseCache):
             
             # Compact heap periodically to prevent unbounded growth from expired key refreshes
             # When heap grows significantly larger than active keys, remove stale entries
-            if len(self.expiration_heap) > len(self.ttl_dict) * 2:
+            if len(self.expiration_heap) > len(self.ttl_dict) * self.HEAP_COMPACTION_THRESHOLD:
                 self._compact_expiration_heap()
 
     async def async_set_cache(self, key, value, **kwargs):
