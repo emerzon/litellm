@@ -806,7 +806,7 @@ def enable_cache(
         port (Optional[str]): The port number of the cache server. Defaults to None.
         password (Optional[str]): The password for the cache server. Defaults to None.
         supported_call_types (Optional[List[Literal["completion", "acompletion", "embedding", "aembedding"]]]):
-            The supported call types for the cache. Defaults to ["completion", "acompletion", "embedding", "aembedding"].
+            The supported call types for the cache. Defaults to all supported call types if not provided.
         **kwargs: Additional keyword arguments.
 
     Returns:
@@ -853,7 +853,7 @@ def update_cache(
         port (Optional[str]): The port of the cache. Defaults to None.
         password (Optional[str]): The password for the cache. Defaults to None.
         supported_call_types (Optional[List[Literal["completion", "acompletion", "embedding", "aembedding"]]]):
-            The supported call types for the cache. Defaults to ["completion", "acompletion", "embedding", "aembedding"].
+            The supported call types for the cache. Defaults to all supported call types if not provided.
         **kwargs: Additional keyword arguments for the cache.
 
     Returns:
