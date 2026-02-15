@@ -1741,3 +1741,124 @@ def test_bedrock_tool_call_invoke_multiple_normal_tools():
     assert len(result) == 2
     assert result[0]["toolUse"]["toolUseId"] == "call_1"
     assert result[1]["toolUse"]["toolUseId"] == "call_2"
+
+
+def test_cohere_messages_pt_v2_assistant_tool_calls_only():
+    """
+    Test that assistant messages with only tool calls (no text content) 
+    are properly included in chat history.
+    
+    This is a regression test for a bug where assistant tool-call-only turns 
+    were dropped from chat history.
+    """
+    from litellm.litellm_core_utils.prompt_templates.factory import (
+        cohere_messages_pt_v2,
+    )
+
+    messages = [
+        {"role": "user", "content": "What is weather?"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"location":"NYC"}'},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "name": "get_weather",
+            "content": "sunny",
+        },
+        {"role": "user", "content": "thanks"},
+    ]
+
+    returned_message, chat_history = cohere_messages_pt_v2(
+        messages=messages,
+        model="command-r-plus",
+        llm_provider="cohere",
+    )
+
+    # Verify the returned message is the last user message
+    assert returned_message == "thanks"
+    
+    # Verify chat history contains all expected entries
+    assert len(chat_history) == 3
+    
+    # Verify first entry is USER
+    assert chat_history[0]["role"] == "USER"
+    assert chat_history[0]["message"] == "What is weather?"
+    
+    # Verify second entry is CHATBOT with tool_calls (the fix target)
+    assert chat_history[1]["role"] == "CHATBOT"
+    assert "tool_calls" in chat_history[1]
+    assert len(chat_history[1]["tool_calls"]) == 1
+    assert chat_history[1]["tool_calls"][0]["name"] == "get_weather"
+    assert chat_history[1]["tool_calls"][0]["parameters"]["location"] == "NYC"
+    
+    # Verify third entry is TOOL
+    assert chat_history[2]["role"] == "TOOL"
+    assert "tool_results" in chat_history[2]
+
+
+def test_cohere_messages_pt_v2_assistant_with_content_and_tool_calls():
+    """
+    Test that assistant messages with both content and tool calls 
+    are properly included in chat history.
+    """
+    from litellm.litellm_core_utils.prompt_templates.factory import (
+        cohere_messages_pt_v2,
+    )
+
+    messages = [
+        {"role": "user", "content": "What is weather in NYC?"},
+        {
+            "role": "assistant",
+            "content": "Let me check the weather for you.",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"location":"NYC"}'},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "name": "get_weather",
+            "content": "sunny, 75°F",
+        },
+        {"role": "user", "content": "thanks"},
+    ]
+
+    returned_message, chat_history = cohere_messages_pt_v2(
+        messages=messages,
+        model="command-r-plus",
+        llm_provider="cohere",
+    )
+
+    # Verify the returned message is the last user message
+    assert returned_message == "thanks"
+    
+    # Verify chat history contains all expected entries
+    assert len(chat_history) == 3
+    
+    # Verify first entry is USER
+    assert chat_history[0]["role"] == "USER"
+    assert chat_history[0]["message"] == "What is weather in NYC?"
+    
+    # Verify second entry is CHATBOT with both message and tool_calls
+    assert chat_history[1]["role"] == "CHATBOT"
+    assert chat_history[1]["message"] == "Let me check the weather for you."
+    assert "tool_calls" in chat_history[1]
+    assert len(chat_history[1]["tool_calls"]) == 1
+    assert chat_history[1]["tool_calls"][0]["name"] == "get_weather"
+    
+    # Verify third entry is TOOL
+    assert chat_history[2]["role"] == "TOOL"
+    assert "tool_results" in chat_history[2]

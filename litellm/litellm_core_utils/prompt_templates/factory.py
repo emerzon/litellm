@@ -2684,7 +2684,7 @@ def cohere_messages_pt_v2(  # noqa: PLR0915
 
             msg_i += 1
 
-        if len(assistant_content) > 0:
+        if len(assistant_content) > 0 or len(assistant_tool_calls) > 0:
             new_messages.append(
                 ChatHistoryChatBot(
                     role="CHATBOT",
