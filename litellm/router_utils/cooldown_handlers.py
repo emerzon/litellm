@@ -402,6 +402,7 @@ def should_cooldown_based_on_allowed_fails_policy(
 ) -> bool:
     """
     Check if fails are within the allowed limit and update the number of fails.
+    Uses atomic increment to prevent race conditions in concurrent failure scenarios.
 
     Returns:
     - True if fails exceed the allowed limit (should cooldown)
@@ -417,15 +418,13 @@ def should_cooldown_based_on_allowed_fails_policy(
         litellm_router_instance.cooldown_time or DEFAULT_COOLDOWN_TIME_SECONDS
     )
 
-    current_fails = litellm_router_instance.failed_calls.get_cache(key=deployment) or 0
-    updated_fails = current_fails + 1
+    # Use atomic increment to prevent race conditions
+    updated_fails = litellm_router_instance.failed_calls.increment_cache(
+        key=deployment, value=1, ttl=cooldown_time
+    )
 
     if updated_fails > allowed_fails:
         return True
-    else:
-        litellm_router_instance.failed_calls.set_cache(
-            key=deployment, value=updated_fails, ttl=cooldown_time
-        )
 
     return False
 
