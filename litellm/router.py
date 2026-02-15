@@ -538,6 +538,9 @@ class Router:
         self.previous_models: List = (
             []
         )  # list to store failed calls (passed in as metadata to next call)
+        self._previous_models_lock = (
+            threading.Lock()
+        )  # lock to protect previous_models list from concurrent access
 
         # make Router.chat.completions.create compatible for openai.chat.completions.create
         default_litellm_params = default_litellm_params or {}
@@ -5725,12 +5728,17 @@ class Router:
                         if metadata_k != "previous_models":
                             previous_model[k][metadata_k] = metadata_v  # type: ignore
 
-            # check current size of self.previous_models, if it's larger than 3, remove the first element
-            if len(self.previous_models) > 3:
-                self.previous_models.pop(0)
+            # Thread-safe update of previous_models list
+            # Use lock to prevent TOCTOU race condition when multiple threads
+            # concurrently access/modify the shared previous_models list
+            with self._previous_models_lock:
+                # check current size of self.previous_models, if it's larger than 3, remove the first element
+                if len(self.previous_models) > 3:
+                    self.previous_models.pop(0)
 
-            self.previous_models.append(previous_model)
-            kwargs[_metadata_var]["previous_models"] = self.previous_models
+                self.previous_models.append(previous_model)
+                # Make a copy of the list to avoid external modification
+                kwargs[_metadata_var]["previous_models"] = self.previous_models.copy()
             return kwargs
         except Exception as e:
             raise e
