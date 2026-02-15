@@ -6,7 +6,6 @@ import asyncio
 import os
 import random
 import subprocess
-import threading
 import time
 import urllib
 import urllib.parse
@@ -349,13 +348,11 @@ class PrismaWrapper:
 
                     if loop and loop.is_running():
                         # Check if we're in the same thread as the running event loop
-                        loop_thread_id = getattr(loop, '_thread_id', None)
-                        current_thread_id = threading.get_ident()
-                        
-                        # If loop_thread_id is not set, assume it's running in the current thread
-                        # (this is the case for asyncio.get_event_loop() in the main thread)
-                        if loop_thread_id is None or loop_thread_id == current_thread_id:
-                            # We're in the same thread as the running event loop
+                        # We detect this by trying to get the running loop - if it succeeds,
+                        # we're in the same thread; if it raises RuntimeError, we're in a different thread
+                        try:
+                            running_loop = asyncio.get_running_loop()
+                            # We successfully got the running loop, meaning we're in the same thread
                             # Schedule refresh as a background task without blocking
                             verbose_proxy_logger.warning(
                                 "Token refresh called from within running event loop. "
@@ -367,8 +364,9 @@ class PrismaWrapper:
                             )
                             # Return the current (stale) attribute without blocking
                             # The refresh will complete in the background
-                        else:
-                            # We're in a different thread, safe to use run_coroutine_threadsafe
+                        except RuntimeError:
+                            # No running loop in this thread, so we're in a different thread
+                            # Safe to use run_coroutine_threadsafe
                             future = asyncio.run_coroutine_threadsafe(
                                 self.recreate_prisma_client(new_db_url), loop
                             )
