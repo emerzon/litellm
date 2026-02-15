@@ -26,6 +26,8 @@ def test_log_retry_concurrent_access():
     - self.previous_models.append(previous_model)
     
     Would cause data loss as threads read stale values and overwrite each other's changes.
+    
+    Test configuration: 20 threads × 100 iterations = 2000 concurrent operations
     """
     # Create a router instance
     router = Router(
@@ -44,7 +46,7 @@ def test_log_retry_concurrent_access():
     # Track all unique models that were added
     added_models: List[str] = []
     num_threads = 20
-    iterations_per_thread = 10
+    iterations_per_thread = 100  # 100 iterations per thread for thorough testing
     
     def worker(thread_id: int):
         """Simulate concurrent retry logging from different threads."""
