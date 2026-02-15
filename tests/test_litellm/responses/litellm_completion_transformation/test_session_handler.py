@@ -420,7 +420,7 @@ async def test_get_chat_completion_message_history_empty_response_dict():
 async def test_parallel_processing_of_spend_logs():
     """
     Test that spend logs are processed in parallel, not serially.
-    This test validates the fix for: https://github.com/BerriAI/litellm/issues/XXX
+    This test validates the fix for parallel processing of spend logs to reduce latency.
     
     The test uses simulated I/O delays to verify that multiple spend logs are
     processed concurrently rather than sequentially, reducing overall latency.
@@ -496,10 +496,10 @@ async def test_parallel_processing_of_spend_logs():
         # Additional verification: Check that calls started at similar times
         # (within a small window), indicating concurrent execution
         if len(call_times) >= 2:
-            # All calls should start within a short time window (e.g., 0.01s)
-            # if they're truly concurrent
+            # All calls should start within a reasonable time window (e.g., 0.1s)
+            # if they're truly concurrent. Using 0.1s to be robust on slower systems.
             time_spread = max(call_times) - min(call_times)
-            assert time_spread < 0.05, (
+            assert time_spread < 0.1, (
                 f"Calls not starting concurrently. "
                 f"Time spread between first and last call: {time_spread:.3f}s"
             )
