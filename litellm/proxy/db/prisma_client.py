@@ -6,6 +6,7 @@ import asyncio
 import os
 import random
 import subprocess
+import threading
 import time
 import urllib
 import urllib.parse
@@ -294,6 +295,26 @@ class PrismaWrapper:
                     "Failed to generate new RDS IAM token during proactive refresh"
                 )
 
+    async def _safe_refresh_token_with_new_url(self, new_db_url: str) -> None:
+        """
+        Refresh the Prisma client with a provided new database URL.
+
+        Similar to _safe_refresh_token but uses a pre-generated URL.
+        Uses locking to prevent race conditions during reconnection.
+        """
+        async with self._reconnection_lock:
+            try:
+                await self.recreate_prisma_client(new_db_url)
+                self._last_refresh_time = datetime.utcnow()
+                verbose_proxy_logger.info(
+                    "Background RDS IAM token refresh completed successfully. "
+                    "New token valid for ~15 minutes."
+                )
+            except Exception as e:
+                verbose_proxy_logger.error(
+                    f"Failed to refresh token in background: {e}"
+                )
+
     def __getattr__(self, name: str):
         """
         Proxy attribute access to the underlying Prisma client.
@@ -303,8 +324,8 @@ class PrismaWrapper:
         should rarely be needed since the background task proactively refreshes
         tokens before they expire.
 
-        FIXED: Now properly waits for reconnection to complete before returning,
-        instead of the previous fire-and-forget pattern that caused the bug.
+        FIXED: Detects if we're in the same thread as the running event loop
+        to avoid deadlock when using run_coroutine_threadsafe().
         """
         original_attr = getattr(self._original_prisma, name)
 
@@ -320,30 +341,55 @@ class PrismaWrapper:
 
                 new_db_url = self.get_rds_iam_token()
                 if new_db_url:
-                    loop = asyncio.get_event_loop()
+                    try:
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        # No event loop in this thread
+                        loop = None
 
-                    if loop.is_running():
-                        # FIXED: Actually wait for the reconnection to complete!
-                        # The previous code used fire-and-forget which caused the bug.
-                        future = asyncio.run_coroutine_threadsafe(
-                            self.recreate_prisma_client(new_db_url), loop
-                        )
-                        try:
-                            # Wait up to 30 seconds for reconnection
-                            future.result(timeout=30)
-                            verbose_proxy_logger.info(
-                                "Synchronous token refresh completed successfully"
+                    if loop and loop.is_running():
+                        # Check if we're in the same thread as the running event loop
+                        loop_thread_id = getattr(loop, '_thread_id', None)
+                        current_thread_id = threading.get_ident()
+                        
+                        # If loop_thread_id is not set, assume it's running in the current thread
+                        # (this is the case for asyncio.get_event_loop() in the main thread)
+                        if loop_thread_id is None or loop_thread_id == current_thread_id:
+                            # We're in the same thread as the running event loop
+                            # Schedule refresh as a background task without blocking
+                            verbose_proxy_logger.warning(
+                                "Token refresh called from within running event loop. "
+                                "Scheduling refresh as background task to avoid deadlock. "
+                                "Returning stale client temporarily."
                             )
-                        except Exception as e:
-                            verbose_proxy_logger.error(
-                                f"Failed to refresh token synchronously: {e}"
+                            asyncio.create_task(
+                                self._safe_refresh_token_with_new_url(new_db_url)
                             )
-                            raise
+                            # Return the current (stale) attribute without blocking
+                            # The refresh will complete in the background
+                        else:
+                            # We're in a different thread, safe to use run_coroutine_threadsafe
+                            future = asyncio.run_coroutine_threadsafe(
+                                self.recreate_prisma_client(new_db_url), loop
+                            )
+                            try:
+                                # Wait up to 30 seconds for reconnection
+                                future.result(timeout=30)
+                                verbose_proxy_logger.info(
+                                    "Synchronous token refresh completed successfully"
+                                )
+                                # Get the NEW attribute after reconnection
+                                original_attr = getattr(self._original_prisma, name)
+                            except Exception as e:
+                                verbose_proxy_logger.error(
+                                    f"Failed to refresh token synchronously: {e}"
+                                )
+                                raise
                     else:
+                        # No event loop running, use asyncio.run()
                         asyncio.run(self.recreate_prisma_client(new_db_url))
-
-                    # Get the NEW attribute after reconnection
-                    original_attr = getattr(self._original_prisma, name)
+                        # Get the NEW attribute after reconnection
+                        original_attr = getattr(self._original_prisma, name)
                 else:
                     raise ValueError("Failed to get RDS IAM token")
 
