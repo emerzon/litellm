@@ -451,6 +451,10 @@ class Router:
             model_group_alias or {}
         )  # dict to store aliases for router, ex. {"gpt-4": "gpt-3.5-turbo"}, all requests with gpt-4 -> get routed to gpt-3.5-turbo group
 
+        # Initialize lock for thread-safe access to model_list and index maps
+        # Using RLock (reentrant lock) to allow methods to call each other while holding lock
+        self._model_list_lock = threading.RLock()
+        
         # Initialize model ID to deployment index mapping for O(1) lookups
         self.model_id_to_deployment_index_map: Dict[str, int] = {}
         # Initialize model name to deployment indices mapping for O(1) lookups
@@ -6207,53 +6211,54 @@ class Router:
         return False
 
     def set_model_list(self, model_list: list):
-        original_model_list = copy.deepcopy(model_list)
-        self.model_list = []
-        self.model_id_to_deployment_index_map = {}  # Reset the index
-        self.model_name_to_deployment_indices = {}  # Reset the model_name index
-        # we add api_base/api_key each model so load balancing between azure/gpt on api_base1 and api_base2 works
+        with self._model_list_lock:
+            original_model_list = copy.deepcopy(model_list)
+            self.model_list = []
+            self.model_id_to_deployment_index_map = {}  # Reset the index
+            self.model_name_to_deployment_indices = {}  # Reset the model_name index
+            # we add api_base/api_key each model so load balancing between azure/gpt on api_base1 and api_base2 works
 
-        for model in original_model_list:
-            _model_name = model.pop("model_name")
-            _litellm_params = model.pop("litellm_params")
-            ## check if litellm params in os.environ
-            if isinstance(_litellm_params, dict):
-                for k, v in _litellm_params.items():
-                    if isinstance(v, str) and v.startswith("os.environ/"):
-                        _litellm_params[k] = get_secret(v)
+            for model in original_model_list:
+                _model_name = model.pop("model_name")
+                _litellm_params = model.pop("litellm_params")
+                ## check if litellm params in os.environ
+                if isinstance(_litellm_params, dict):
+                    for k, v in _litellm_params.items():
+                        if isinstance(v, str) and v.startswith("os.environ/"):
+                            _litellm_params[k] = get_secret(v)
 
-            _model_info: dict = model.pop("model_info", {})
+                _model_info: dict = model.pop("model_info", {})
 
-            # check if model info has id
-            if "id" not in _model_info:
-                _id = self._generate_model_id(_model_name, _litellm_params)
-                _model_info["id"] = _id
+                # check if model info has id
+                if "id" not in _model_info:
+                    _id = self._generate_model_id(_model_name, _litellm_params)
+                    _model_info["id"] = _id
 
-            if _litellm_params.get("organization", None) is not None and isinstance(
-                _litellm_params["organization"], list
-            ):  # Addresses https://github.com/BerriAI/litellm/issues/3949
-                for org in _litellm_params["organization"]:
-                    _litellm_params["organization"] = org
+                if _litellm_params.get("organization", None) is not None and isinstance(
+                    _litellm_params["organization"], list
+                ):  # Addresses https://github.com/BerriAI/litellm/issues/3949
+                    for org in _litellm_params["organization"]:
+                        _litellm_params["organization"] = org
+                        self._create_deployment(
+                            deployment_info=model,
+                            _model_name=_model_name,
+                            _litellm_params=_litellm_params,
+                            _model_info=_model_info,
+                        )
+                else:
                     self._create_deployment(
                         deployment_info=model,
                         _model_name=_model_name,
                         _litellm_params=_litellm_params,
                         _model_info=_model_info,
                     )
-            else:
-                self._create_deployment(
-                    deployment_info=model,
-                    _model_name=_model_name,
-                    _litellm_params=_litellm_params,
-                    _model_info=_model_info,
-                )
 
-        verbose_router_logger.debug(
-            f"\nInitialized Model List {self.get_model_names()}"
-        )
-        self.model_names = {m["model_name"] for m in model_list}
+            verbose_router_logger.debug(
+                f"\nInitialized Model List {self.get_model_names()}"
+            )
+            self.model_names = {m["model_name"] for m in model_list}
 
-        # Note: model_name_to_deployment_indices is already built incrementally
+            # Note: model_name_to_deployment_indices is already built incrementally
         # by _create_deployment -> _add_model_to_list_and_index_map
 
     def _add_deployment(self, deployment: Deployment) -> Deployment:
@@ -6446,23 +6451,24 @@ class Router:
         - The added deployment
         - OR None (if deployment already exists)
         """
-        # check if deployment already exists
+        with self._model_list_lock:
+            # check if deployment already exists
 
-        _deployment_model_id = deployment.model_info.id
-        if _deployment_model_id and self.has_model_id(_deployment_model_id):
-            return None
+            _deployment_model_id = deployment.model_info.id
+            if _deployment_model_id and self.has_model_id(_deployment_model_id):
+                return None
 
-        # add to model list
-        _deployment = deployment.to_json(exclude_none=True)
-        # initialize client
-        self._add_deployment(deployment=deployment)
+            # add to model list
+            _deployment = deployment.to_json(exclude_none=True)
+            # initialize client
+            self._add_deployment(deployment=deployment)
 
-        # add to model names
-        self._add_model_to_list_and_index_map(
-            model=_deployment, model_id=deployment.model_info.id
-        )
-        self.model_names.add(deployment.model_name)
-        return deployment
+            # add to model names
+            self._add_model_to_list_and_index_map(
+                model=_deployment, model_id=deployment.model_info.id
+            )
+            self.model_names.add(deployment.model_name)
+            return deployment
 
     def _update_deployment_indices_after_removal(
         self, model_id: str, removal_idx: int
@@ -6538,36 +6544,38 @@ class Router:
         - The added/updated deployment
         """
         try:
-            # check if deployment already exists
-            _deployment_model_id = deployment.model_info.id or ""
+            with self._model_list_lock:
+                # check if deployment already exists
+                _deployment_model_id = deployment.model_info.id or ""
 
-            _deployment_on_router: Optional[Deployment] = self.get_deployment(
-                model_id=_deployment_model_id
-            )
-            if _deployment_on_router is not None:
-                # deployment with this model_id exists on the router
-                if deployment.litellm_params == _deployment_on_router.litellm_params:
-                    # No need to update
-                    return None
+                _deployment_on_router: Optional[Deployment] = self.get_deployment(
+                    model_id=_deployment_model_id
+                )
+                if _deployment_on_router is not None:
+                    # deployment with this model_id exists on the router
+                    if deployment.litellm_params == _deployment_on_router.litellm_params:
+                        # No need to update
+                        return None
 
-                # if there is a new litellm param -> then update the deployment
-                # remove the previous deployment
-                removal_idx: Optional[int] = None
-                deployment_id = deployment.model_info.id
-                deployment_fast_mapping = self.model_id_to_deployment_index_map
+                    # if there is a new litellm param -> then update the deployment
+                    # remove the previous deployment
+                    removal_idx: Optional[int] = None
+                    deployment_id = deployment.model_info.id
+                    deployment_fast_mapping = self.model_id_to_deployment_index_map
 
-                if deployment_id in deployment_fast_mapping:
-                    removal_idx = deployment_fast_mapping[deployment_id]
+                    if deployment_id in deployment_fast_mapping:
+                        removal_idx = deployment_fast_mapping[deployment_id]
 
-                    if removal_idx is not None:
-                        self.model_list.pop(removal_idx)
-                        self._update_deployment_indices_after_removal(
-                            model_id=deployment_id, removal_idx=removal_idx
-                        )
+                        if removal_idx is not None:
+                            self.model_list.pop(removal_idx)
+                            self._update_deployment_indices_after_removal(
+                                model_id=deployment_id, removal_idx=removal_idx
+                            )
 
-            # if the model_id is not in router
-            self.add_deployment(deployment=deployment)
-            return deployment
+                # if the model_id is not in router
+                # Note: add_deployment will acquire the lock again (RLock allows this)
+                self.add_deployment(deployment=deployment)
+                return deployment
         except Exception as e:
             if self.ignore_invalid_deployments:
                 verbose_router_logger.debug(
@@ -6586,21 +6594,22 @@ class Router:
         - The deleted deployment
         - OR None (if deleted deployment not found)
         """
-        deployment_idx = None
-        if id in self.model_id_to_deployment_index_map:
-            deployment_idx = self.model_id_to_deployment_index_map[id]
+        with self._model_list_lock:
+            deployment_idx = None
+            if id in self.model_id_to_deployment_index_map:
+                deployment_idx = self.model_id_to_deployment_index_map[id]
 
-        try:
-            if deployment_idx is not None:
-                # Pop the item from the list first
-                item = self.model_list.pop(deployment_idx)
-                self._update_deployment_indices_after_removal(
-                    model_id=id, removal_idx=deployment_idx
-                )
-                return item
-            else:
-                return None
-        except Exception:
+            try:
+                if deployment_idx is not None:
+                    # Pop the item from the list first
+                    item = self.model_list.pop(deployment_idx)
+                    self._update_deployment_indices_after_removal(
+                        model_id=id, removal_idx=deployment_idx
+                    )
+                    return item
+                else:
+                    return None
+            except Exception:
             return None
 
     def get_deployment(self, model_id: str) -> Optional[Deployment]:
@@ -6609,18 +6618,19 @@ class Router:
 
         Raise Exception -> if model found in invalid format
         """
-        # Use O(1) lookup via model_id_to_deployment_index_map only
-        if model_id in self.model_id_to_deployment_index_map:
-            idx = self.model_id_to_deployment_index_map[model_id]
-            model = self.model_list[idx]
-            if isinstance(model, dict):
-                return Deployment(**model)
-            elif isinstance(model, Deployment):
-                return model
-            else:
-                raise Exception("Model invalid format - {}".format(type(model)))
+        with self._model_list_lock:
+            # Use O(1) lookup via model_id_to_deployment_index_map only
+            if model_id in self.model_id_to_deployment_index_map:
+                idx = self.model_id_to_deployment_index_map[model_id]
+                model = self.model_list[idx]
+                if isinstance(model, dict):
+                    return Deployment(**model)
+                elif isinstance(model, Deployment):
+                    return model
+                else:
+                    raise Exception("Model invalid format - {}".format(type(model)))
 
-        return None
+            return None
 
     def get_deployment_credentials(self, model_id: str) -> Optional[dict]:
         """
@@ -6643,19 +6653,20 @@ class Router:
 
         Optimized with O(1) index lookup instead of O(n) linear scan.
         """
-        # O(1) lookup in model_name index
-        if model_group_name in self.model_name_to_deployment_indices:
-            indices = self.model_name_to_deployment_indices[model_group_name]
-            if indices:
-                # Return first deployment for this model_name
-                model = self.model_list[indices[0]]
-                if isinstance(model, dict):
-                    return Deployment(**model)
-                elif isinstance(model, Deployment):
-                    return model
-                else:
-                    raise Exception("Model Name invalid - {}".format(type(model)))
-        return None
+        with self._model_list_lock:
+            # O(1) lookup in model_name index
+            if model_group_name in self.model_name_to_deployment_indices:
+                indices = self.model_name_to_deployment_indices[model_group_name]
+                if indices:
+                    # Return first deployment for this model_name
+                    model = self.model_list[indices[0]]
+                    if isinstance(model, dict):
+                        return Deployment(**model)
+                    elif isinstance(model, Deployment):
+                        return model
+                    else:
+                        raise Exception("Model Name invalid - {}".format(type(model)))
+            return None
 
     def get_deployment_credentials_with_provider(
         self, model_id: str
@@ -7392,7 +7403,8 @@ class Router:
         in sync by `_build_model_id_to_deployment_index_map` and model-list
         mutation helpers.
         """
-        return candidate_id in self.model_id_to_deployment_index_map
+        with self._model_list_lock:
+            return candidate_id in self.model_id_to_deployment_index_map
 
     def resolve_model_name_from_model_id(
         self, model_id: Optional[str]
@@ -7497,43 +7509,44 @@ class Router:
 
         Optimized with O(1) index lookup instead of O(n) linear scan.
         """
-        returned_models: List[DeploymentTypedDict] = []
+        with self._model_list_lock:
+            returned_models: List[DeploymentTypedDict] = []
 
-        # O(1) lookup in model_name index
-        if model_name in self.model_name_to_deployment_indices:
-            indices = self.model_name_to_deployment_indices[model_name]
+            # O(1) lookup in model_name index
+            if model_name in self.model_name_to_deployment_indices:
+                indices = self.model_name_to_deployment_indices[model_name]
 
-            # O(k) where k = deployments for this model_name (typically 1-10)
-            for idx in indices:
-                model = self.model_list[idx]
-                if self.should_include_deployment(
-                    model_name=model_name, model=model, team_id=team_id
-                ):
-                    if model_alias is not None:
-                        # Optimized: Use shallow copy since we only modify top-level model_name
-                        # This is much faster than deepcopy for nested dict structures
-                        alias_model = model.copy()
-                        alias_model["model_name"] = model_alias
-                        returned_models.append(alias_model)
-                    else:
-                        returned_models.append(model)
-        elif team_id is not None:
-            # Fallback: if team_id is provided and model_name not in index,
-            # check if model_name matches any team_public_model_name
-            # O(n) scan but only when team_id lookup fails
-            for idx, model in enumerate(self.model_list):
-                if self.should_include_deployment(
-                    model_name=model_name, model=model, team_id=team_id
-                ):
-                    if model_alias is not None:
-                        # Optimized: Use shallow copy since we only modify top-level model_name
-                        alias_model = model.copy()
-                        alias_model["model_name"] = model_alias
-                        returned_models.append(alias_model)
-                    else:
-                        returned_models.append(model)
+                # O(k) where k = deployments for this model_name (typically 1-10)
+                for idx in indices:
+                    model = self.model_list[idx]
+                    if self.should_include_deployment(
+                        model_name=model_name, model=model, team_id=team_id
+                    ):
+                        if model_alias is not None:
+                            # Optimized: Use shallow copy since we only modify top-level model_name
+                            # This is much faster than deepcopy for nested dict structures
+                            alias_model = model.copy()
+                            alias_model["model_name"] = model_alias
+                            returned_models.append(alias_model)
+                        else:
+                            returned_models.append(model)
+            elif team_id is not None:
+                # Fallback: if team_id is provided and model_name not in index,
+                # check if model_name matches any team_public_model_name
+                # O(n) scan but only when team_id lookup fails
+                for idx, model in enumerate(self.model_list):
+                    if self.should_include_deployment(
+                        model_name=model_name, model=model, team_id=team_id
+                    ):
+                        if model_alias is not None:
+                            # Optimized: Use shallow copy since we only modify top-level model_name
+                            alias_model = model.copy()
+                            alias_model["model_name"] = model_alias
+                            returned_models.append(alias_model)
+                        else:
+                            returned_models.append(model)
 
-        return returned_models
+            return returned_models
 
     def get_model_names(self, team_id: Optional[str] = None) -> List[str]:
         """
@@ -7660,7 +7673,8 @@ class Router:
                     returned_models.append(deployment_typed_dict)
 
         if model_name is None:
-            returned_models += self.model_list
+            with self._model_list_lock:
+                returned_models += self.model_list
 
         return returned_models
 
