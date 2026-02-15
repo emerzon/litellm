@@ -250,7 +250,9 @@ class Cache:
             litellm.logging_callback_manager.add_litellm_async_success_callback("cache")
         # Create a copy of the list to ensure each instance has its own independent list
         self.supported_call_types = list(
-            supported_call_types if supported_call_types is not None else DEFAULT_SUPPORTED_CALL_TYPES
+            supported_call_types
+            if supported_call_types is not None
+            else DEFAULT_SUPPORTED_CALL_TYPES
         )
         self.type = type
         self.namespace = namespace
