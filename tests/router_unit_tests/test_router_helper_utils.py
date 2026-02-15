@@ -2198,3 +2198,39 @@ def test_get_valid_args():
     # Verify it contains keyword-only arguments too
     # These are common Router.__init__ parameters
     assert "assistants_config" in valid_args or "search_tools" in valid_args
+
+
+def test_cached_get_model_group_info_multiple_calls():
+    """Test that _cached_get_model_group_info caches results across multiple calls"""
+    # Create a router with multiple deployments to make get_model_group_info expensive
+    model_list = []
+    for i in range(100):
+        model_list.append({
+            "model_name": "gpt-test",
+            "litellm_params": {"model": "gpt-test"},
+            "model_info": {"id": str(i), "tpm": 10, "rpm": 100},
+        })
+    
+    router = Router()
+    router._build_model_id_to_deployment_index_map(model_list)
+    
+    # Clear cache to start fresh
+    router._cached_get_model_group_info.cache_clear()
+    
+    # Make multiple calls (simulating repeated calls in request pipeline)
+    result1 = router._cached_get_model_group_info("gpt-test")
+    result2 = router._cached_get_model_group_info("gpt-test")
+    result3 = router._cached_get_model_group_info("gpt-test")
+    
+    # Verify results are the same
+    assert result1 == result2 == result3
+    assert result1 is not None
+    
+    # Verify cache was hit (should have 2 hits after 3 calls)
+    cache_info = router._cached_get_model_group_info.cache_info()
+    assert cache_info.hits >= 2, f"Expected at least 2 cache hits, got {cache_info.hits}"
+    assert cache_info.misses == 1, f"Expected exactly 1 cache miss, got {cache_info.misses}"
+    
+    # Verify aggregated TPM/RPM values are correct
+    assert result1.tpm == 1000, f"Expected TPM=1000 (10*100), got {result1.tpm}"
+    assert result1.rpm == 10000, f"Expected RPM=10000 (100*100), got {result1.rpm}"
