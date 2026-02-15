@@ -5725,12 +5725,20 @@ class Router:
                         if metadata_k != "previous_models":
                             previous_model[k][metadata_k] = metadata_v  # type: ignore
 
-            # check current size of self.previous_models, if it's larger than 3, remove the first element
-            if len(self.previous_models) > 3:
-                self.previous_models.pop(0)
-
-            self.previous_models.append(previous_model)
-            kwargs[_metadata_var]["previous_models"] = self.previous_models
+            # Initialize per-request previous_models list if not present
+            if "previous_models" not in kwargs[_metadata_var]:
+                kwargs[_metadata_var]["previous_models"] = []
+            
+            # Get the per-request previous_models list
+            request_previous_models = kwargs[_metadata_var]["previous_models"]
+            
+            # Apply cap of 3 entries per request before appending
+            if len(request_previous_models) >= 3:
+                request_previous_models.pop(0)
+            
+            # Append to the per-request list
+            request_previous_models.append(previous_model)
+            
             return kwargs
         except Exception as e:
             raise e
