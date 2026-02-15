@@ -973,16 +973,23 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
 
     def translate_system_message(
         self, messages: List[AllMessageValues]
-    ) -> List[AnthropicSystemMessageContent]:
+    ) -> Tuple[List[AllMessageValues], List[AnthropicSystemMessageContent]]:
         """
         Translate system message to anthropic format.
 
-        Removes system message from the original list and returns a new list of anthropic system message content.
+        Extracts system messages and returns them separately without mutating the input list.
         Filters out system messages containing x-anthropic-billing-header metadata.
+
+        Returns:
+            Tuple containing:
+            - List of non-system messages (filtered copy of input)
+            - List of anthropic system message content
         """
+        # Work on a copy to avoid mutating caller's list
+        messages_copy = list(messages)
         system_prompt_indices = []
         anthropic_system_message_list: List[AnthropicSystemMessageContent] = []
-        for idx, message in enumerate(messages):
+        for idx, message in enumerate(messages_copy):
             if message["role"] == "system":
                 valid_content: bool = False
                 system_message_block = ChatCompletionSystemMessage(**message)
@@ -1032,11 +1039,12 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
 
                 if valid_content:
                     system_prompt_indices.append(idx)
+        # Remove system messages from the copy
         if len(system_prompt_indices) > 0:
             for idx in reversed(system_prompt_indices):
-                messages.pop(idx)
+                messages_copy.pop(idx)
 
-        return anthropic_system_message_list
+        return messages_copy, anthropic_system_message_list
 
     def add_code_execution_tool(
         self,
@@ -1220,7 +1228,7 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
         )
 
         # Separate system prompt from rest of message
-        anthropic_system_message_list = self.translate_system_message(messages=messages)
+        messages, anthropic_system_message_list = self.translate_system_message(messages=messages)
         # Handling anthropic API Prompt Caching
         if len(anthropic_system_message_list) > 0:
             optional_params["system"] = anthropic_system_message_list
