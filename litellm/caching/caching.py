@@ -51,6 +51,23 @@ class CacheMode(str, Enum):
     default_off = "default_off"
 
 
+# Default list of supported call types for caching
+DEFAULT_SUPPORTED_CALL_TYPES: List[CachingSupportedCallTypes] = [
+    "completion",
+    "acompletion",
+    "embedding",
+    "aembedding",
+    "atranscription",
+    "transcription",
+    "atext_completion",
+    "text_completion",
+    "arerank",
+    "rerank",
+    "responses",
+    "aresponses",
+]
+
+
 #### LiteLLM.Completion / Embedding Cache ####
 class Cache:
     def __init__(
@@ -67,20 +84,7 @@ class Cache:
         default_in_memory_ttl: Optional[float] = None,
         default_in_redis_ttl: Optional[float] = None,
         similarity_threshold: Optional[float] = None,
-        supported_call_types: Optional[List[CachingSupportedCallTypes]] = [
-            "completion",
-            "acompletion",
-            "embedding",
-            "aembedding",
-            "atranscription",
-            "transcription",
-            "atext_completion",
-            "text_completion",
-            "arerank",
-            "rerank",
-            "responses",
-            "aresponses",
-        ],
+        supported_call_types: Optional[List[CachingSupportedCallTypes]] = None,
         # s3 Bucket, boto3 configuration
         azure_account_url: Optional[str] = None,
         azure_blob_container: Optional[str] = None,
@@ -244,7 +248,10 @@ class Cache:
             litellm.logging_callback_manager.add_litellm_success_callback("cache")
         if "cache" not in litellm._async_success_callback:
             litellm.logging_callback_manager.add_litellm_async_success_callback("cache")
-        self.supported_call_types = supported_call_types  # default to ["completion", "acompletion", "embedding", "aembedding"]
+        # Create a copy of the list to ensure each instance has its own independent list
+        self.supported_call_types = list(
+            supported_call_types if supported_call_types is not None else DEFAULT_SUPPORTED_CALL_TYPES
+        )
         self.type = type
         self.namespace = namespace
         self.redis_flush_size = redis_flush_size
@@ -787,20 +794,7 @@ def enable_cache(
     host: Optional[str] = None,
     port: Optional[str] = None,
     password: Optional[str] = None,
-    supported_call_types: Optional[List[CachingSupportedCallTypes]] = [
-        "completion",
-        "acompletion",
-        "embedding",
-        "aembedding",
-        "atranscription",
-        "transcription",
-        "atext_completion",
-        "text_completion",
-        "arerank",
-        "rerank",
-        "responses",
-        "aresponses",
-    ],
+    supported_call_types: Optional[List[CachingSupportedCallTypes]] = None,
     **kwargs,
 ):
     """
@@ -847,20 +841,7 @@ def update_cache(
     host: Optional[str] = None,
     port: Optional[str] = None,
     password: Optional[str] = None,
-    supported_call_types: Optional[List[CachingSupportedCallTypes]] = [
-        "completion",
-        "acompletion",
-        "embedding",
-        "aembedding",
-        "atranscription",
-        "transcription",
-        "atext_completion",
-        "text_completion",
-        "arerank",
-        "rerank",
-        "responses",
-        "aresponses",
-    ],
+    supported_call_types: Optional[List[CachingSupportedCallTypes]] = None,
     **kwargs,
 ):
     """
