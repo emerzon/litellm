@@ -1961,12 +1961,13 @@ class BaseTokenUsageProcessor:
     # Using single underscore as this is internal implementation detail but accessible to subclasses
     _usage_numeric_fields_cache = None
 
-    @staticmethod
-    def combine_usage_objects(usage_objects: List[Usage]) -> Usage:
+    @classmethod
+    def combine_usage_objects(cls, usage_objects: List[Usage]) -> Usage:
         """
         Combine multiple Usage objects into a single Usage object, checking model keys for nested values.
         
         Optimized to use precomputed field lists instead of dir() for better performance.
+        Also handles dynamically-added numeric attributes (e.g., citation_tokens, num_sources_used).
         """
         from litellm.types.utils import (
             CompletionTokensDetailsWrapper,
@@ -1977,7 +1978,7 @@ class BaseTokenUsageProcessor:
         combined = Usage()
 
         # Lazily compute and cache numeric fields from Usage model_fields to avoid dir() overhead
-        if BaseTokenUsageProcessor._usage_numeric_fields_cache is None:
+        if cls._usage_numeric_fields_cache is None:
             # Build list of numeric field names, excluding nested objects and private fields
             numeric_fields = set()
             for field_name in Usage.model_fields:
@@ -1985,16 +1986,32 @@ class BaseTokenUsageProcessor:
                     # Skip nested objects that have their own processing
                     if field_name not in ("prompt_tokens_details", "completion_tokens_details", "server_tool_use"):
                         numeric_fields.add(field_name)
-            BaseTokenUsageProcessor._usage_numeric_fields_cache = numeric_fields
+            cls._usage_numeric_fields_cache = numeric_fields
 
         # Sum basic token counts
         for usage in usage_objects:
             # Handle direct numeric attributes using precomputed fields
-            for attr in BaseTokenUsageProcessor._usage_numeric_fields_cache:
+            for attr in cls._usage_numeric_fields_cache:
                 new_val = getattr(usage, attr, None)
                 if new_val is not None and isinstance(new_val, (int, float)):
                     current_val = getattr(combined, attr, 0)
                     setattr(combined, attr, current_val + new_val)
+            
+            # Handle dynamically-added numeric attributes (e.g., citation_tokens, num_sources_used)
+            # These are set via setattr and stored in Pydantic's __pydantic_extra__
+            extra_attrs = {}
+            if hasattr(usage, "__pydantic_extra__") and usage.__pydantic_extra__:
+                extra_attrs = usage.__pydantic_extra__
+            
+            for attr, value in extra_attrs.items():
+                if (
+                    not attr.startswith("_") 
+                    and attr not in cls._usage_numeric_fields_cache
+                    and attr not in ("prompt_tokens_details", "completion_tokens_details", "server_tool_use")
+                    and isinstance(value, (int, float))
+                ):
+                    current_val = getattr(combined, attr, 0)
+                    setattr(combined, attr, current_val + value)
 
             # Handle nested prompt_tokens_details
             if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:

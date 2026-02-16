@@ -266,3 +266,53 @@ def test_combine_usage_objects_large_batch():
     expected_cached = sum(i * 2 for i in range(100))
     assert result.prompt_tokens_details.audio_tokens == expected_audio
     assert result.prompt_tokens_details.cached_tokens == expected_cached
+
+
+def test_combine_usage_objects_with_dynamic_attributes():
+    """Test combining usage objects with dynamically-added numeric attributes.
+    
+    Some providers add extra fields via setattr (e.g., citation_tokens from Perplexity,
+    num_sources_used from X.AI). These should be aggregated even though they're not
+    in Usage.model_fields.
+    """
+    usage1 = Usage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
+    usage2 = Usage(prompt_tokens=200, completion_tokens=100, total_tokens=300)
+    usage3 = Usage(prompt_tokens=150, completion_tokens=75, total_tokens=225)
+
+    # Simulate provider-specific dynamic attributes (like citation_tokens, num_sources_used)
+    setattr(usage1, "citation_tokens", 10)
+    setattr(usage1, "num_sources_used", 2)
+
+    setattr(usage2, "citation_tokens", 15)
+    setattr(usage2, "num_sources_used", 3)
+
+    setattr(usage3, "citation_tokens", 5)
+    setattr(usage3, "num_sources_used", 1)
+
+    result = BaseTokenUsageProcessor.combine_usage_objects([usage1, usage2, usage3])
+
+    # Verify basic fields
+    assert result.prompt_tokens == 450
+    assert result.completion_tokens == 225
+    assert result.total_tokens == 675
+
+    # Verify dynamically-added fields are aggregated
+    assert hasattr(result, "citation_tokens")
+    assert result.citation_tokens == 30  # 10 + 15 + 5
+    assert hasattr(result, "num_sources_used")
+    assert result.num_sources_used == 6  # 2 + 3 + 1
+
+
+def test_combine_usage_objects_mixed_dynamic_attributes():
+    """Test that dynamic attributes are only aggregated from objects that have them."""
+    usage1 = Usage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
+    usage2 = Usage(prompt_tokens=200, completion_tokens=100, total_tokens=300)
+
+    # Only usage1 has the dynamic attribute
+    setattr(usage1, "special_tokens", 25)
+
+    result = BaseTokenUsageProcessor.combine_usage_objects([usage1, usage2])
+
+    # Verify the dynamic attribute is preserved
+    assert hasattr(result, "special_tokens")
+    assert result.special_tokens == 25
