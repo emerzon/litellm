@@ -1958,7 +1958,8 @@ def batch_cost_calculator(
 
 class BaseTokenUsageProcessor:
     # Cache numeric fields to avoid repeated model_fields inspection
-    _USAGE_NUMERIC_FIELDS = None
+    # Using single underscore as this is internal implementation detail but accessible to subclasses
+    _usage_numeric_fields_cache = None
 
     @staticmethod
     def combine_usage_objects(usage_objects: List[Usage]) -> Usage:
@@ -1976,7 +1977,7 @@ class BaseTokenUsageProcessor:
         combined = Usage()
 
         # Lazily compute and cache numeric fields from Usage model_fields to avoid dir() overhead
-        if BaseTokenUsageProcessor._USAGE_NUMERIC_FIELDS is None:
+        if BaseTokenUsageProcessor._usage_numeric_fields_cache is None:
             # Build list of numeric field names, excluding nested objects and private fields
             numeric_fields = set()
             for field_name in Usage.model_fields:
@@ -1984,15 +1985,15 @@ class BaseTokenUsageProcessor:
                     # Skip nested objects that have their own processing
                     if field_name not in ("prompt_tokens_details", "completion_tokens_details", "server_tool_use"):
                         numeric_fields.add(field_name)
-            BaseTokenUsageProcessor._USAGE_NUMERIC_FIELDS = numeric_fields
+            BaseTokenUsageProcessor._usage_numeric_fields_cache = numeric_fields
 
         # Sum basic token counts
         for usage in usage_objects:
             # Handle direct numeric attributes using precomputed fields
-            for attr in BaseTokenUsageProcessor._USAGE_NUMERIC_FIELDS:
+            for attr in BaseTokenUsageProcessor._usage_numeric_fields_cache:
                 new_val = getattr(usage, attr, None)
                 if new_val is not None and isinstance(new_val, (int, float)):
-                    current_val = getattr(combined, attr, 0) or 0
+                    current_val = getattr(combined, attr, 0)
                     setattr(combined, attr, current_val + new_val)
 
             # Handle nested prompt_tokens_details
@@ -2007,9 +2008,10 @@ class BaseTokenUsageProcessor:
                 for attr in type(usage.prompt_tokens_details).model_fields:
                     new_val = getattr(usage.prompt_tokens_details, attr, None)
                     if new_val is not None and isinstance(new_val, (int, float)):
-                        current_val = (
-                            getattr(combined.prompt_tokens_details, attr, 0) or 0
-                        )
+                        current_val = getattr(combined.prompt_tokens_details, attr, None)
+                        # Handle None by treating it as 0 for addition
+                        if current_val is None:
+                            current_val = 0
                         setattr(
                             combined.prompt_tokens_details,
                             attr,
@@ -2033,9 +2035,10 @@ class BaseTokenUsageProcessor:
                 for attr in type(usage.completion_tokens_details).model_fields:
                     new_val = getattr(usage.completion_tokens_details, attr, None)
                     if new_val is not None and isinstance(new_val, (int, float)):
-                        current_val = (
-                            getattr(combined.completion_tokens_details, attr, 0) or 0
-                        )
+                        current_val = getattr(combined.completion_tokens_details, attr, None)
+                        # Handle None by treating it as 0 for addition
+                        if current_val is None:
+                            current_val = 0
                         setattr(
                             combined.completion_tokens_details,
                             attr,

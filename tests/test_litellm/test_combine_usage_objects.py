@@ -223,8 +223,8 @@ def test_combine_usage_objects_caching_behavior():
     assert result2.completion_tokens == 100
 
     # Verify the cache was populated
-    assert BaseTokenUsageProcessor._USAGE_NUMERIC_FIELDS is not None
-    assert len(BaseTokenUsageProcessor._USAGE_NUMERIC_FIELDS) > 0
+    assert BaseTokenUsageProcessor._usage_numeric_fields_cache is not None
+    assert len(BaseTokenUsageProcessor._usage_numeric_fields_cache) > 0
 
 
 def test_combine_usage_objects_large_batch():
