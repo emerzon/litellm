@@ -1709,8 +1709,6 @@ class Router:
             }
             input_kwargs.pop("silent_model", None)
 
-            _response = litellm.acompletion(**input_kwargs)
-
             logging_obj: Optional[LiteLLMLogging] = kwargs.get(
                 "litellm_logging_obj", None
             )
@@ -1733,7 +1731,7 @@ class Router:
                         logging_obj=logging_obj,
                         parent_otel_span=parent_otel_span,
                     )
-                    response = await _response
+                    response = await litellm.acompletion(**input_kwargs)
             else:
                 await self.async_routing_strategy_pre_call_checks(
                     deployment=deployment,
@@ -1741,7 +1739,7 @@ class Router:
                     parent_otel_span=parent_otel_span,
                 )
 
-                response = await _response
+                response = await litellm.acompletion(**input_kwargs)
 
             ## CHECK CONTENT FILTER ERROR ##
             if isinstance(response, ModelResponse):
@@ -2243,6 +2241,15 @@ class Router:
                 result = await check_response(completed_task)
 
                 if result is not None:
+                    # Await any remaining pending tasks to ensure proper cleanup
+                    for t in pending_tasks:
+                        try:
+                            await t
+                        except (asyncio.CancelledError, Exception):
+                            # Task was canceled or raised an exception, which is expected
+                            pass
+                    # Give the event loop a chance to clean up
+                    await asyncio.sleep(0)
                     # Return the first successful result
                     result._hidden_params["fastest_response_batch_completion"] = True
                     return result
