@@ -1965,10 +1965,17 @@ def batch_cost_calculator(
 
 
 class BaseTokenUsageProcessor:
-    @staticmethod
-    def combine_usage_objects(usage_objects: List[Usage]) -> Usage:
+    # Cache numeric fields to avoid repeated model_fields inspection
+    # Using single underscore as this is internal implementation detail but accessible to subclasses
+    _usage_numeric_fields_cache = None
+
+    @classmethod
+    def combine_usage_objects(cls, usage_objects: List[Usage]) -> Usage:
         """
         Combine multiple Usage objects into a single Usage object, checking model keys for nested values.
+        
+        Optimized to use precomputed field lists instead of dir() for better performance.
+        Also handles dynamically-added numeric attributes (e.g., citation_tokens, num_sources_used).
         """
         from litellm.types.utils import (
             CompletionTokensDetailsWrapper,
@@ -1978,19 +1985,42 @@ class BaseTokenUsageProcessor:
 
         combined = Usage()
 
+        # Lazily compute and cache numeric fields from Usage model_fields to avoid dir() overhead
+        if cls._usage_numeric_fields_cache is None:
+            # Build list of numeric field names, excluding nested objects and private fields
+            numeric_fields = set()
+            for field_name in Usage.model_fields:
+                if not field_name.startswith("_"):
+                    # Skip nested objects that have their own processing
+                    if field_name not in ("prompt_tokens_details", "completion_tokens_details", "server_tool_use"):
+                        numeric_fields.add(field_name)
+            cls._usage_numeric_fields_cache = numeric_fields
+
         # Sum basic token counts
         for usage in usage_objects:
-            # Handle direct attributes by checking what exists in the model
-            for attr in dir(usage):
-                if not attr.startswith("_") and not callable(getattr(usage, attr)):
+            # Handle direct numeric attributes using precomputed fields
+            for attr in cls._usage_numeric_fields_cache:
+                new_val = getattr(usage, attr, None)
+                if new_val is not None and isinstance(new_val, (int, float)):
                     current_val = getattr(combined, attr, 0)
-                    new_val = getattr(usage, attr, 0)
-                    if (
-                        new_val is not None
-                        and isinstance(new_val, (int, float))
-                        and isinstance(current_val, (int, float))
-                    ):
-                        setattr(combined, attr, current_val + new_val)
+                    setattr(combined, attr, current_val + new_val)
+            
+            # Handle dynamically-added numeric attributes (e.g., citation_tokens, num_sources_used)
+            # These are set via setattr and stored in Pydantic's __pydantic_extra__
+            extra_attrs = {}
+            if hasattr(usage, "__pydantic_extra__") and usage.__pydantic_extra__:
+                extra_attrs = usage.__pydantic_extra__
+            
+            for attr, value in extra_attrs.items():
+                if (
+                    not attr.startswith("_") 
+                    and attr not in cls._usage_numeric_fields_cache
+                    and attr not in ("prompt_tokens_details", "completion_tokens_details", "server_tool_use")
+                    and isinstance(value, (int, float))
+                ):
+                    current_val = getattr(combined, attr, 0)
+                    setattr(combined, attr, current_val + value)
+
             # Handle nested prompt_tokens_details
             if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
                 if (
@@ -1999,24 +2029,19 @@ class BaseTokenUsageProcessor:
                 ):
                     combined.prompt_tokens_details = PromptTokensDetailsWrapper()
 
-                # Check what keys exist in the model's prompt_tokens_details
-                # Access model_fields on the class, not the instance, to avoid Pydantic 2.11+ deprecation warnings
+                # Iterate through model fields directly (already optimized)
                 for attr in type(usage.prompt_tokens_details).model_fields:
-                    if (
-                        hasattr(usage.prompt_tokens_details, attr)
-                        and not attr.startswith("_")
-                        and not callable(getattr(usage.prompt_tokens_details, attr))
-                    ):
-                        current_val = (
-                            getattr(combined.prompt_tokens_details, attr, 0) or 0
+                    new_val = getattr(usage.prompt_tokens_details, attr, None)
+                    if new_val is not None and isinstance(new_val, (int, float)):
+                        current_val = getattr(combined.prompt_tokens_details, attr, None)
+                        # Handle None by treating it as 0 for addition
+                        if current_val is None:
+                            current_val = 0
+                        setattr(
+                            combined.prompt_tokens_details,
+                            attr,
+                            current_val + new_val,
                         )
-                        new_val = getattr(usage.prompt_tokens_details, attr, 0) or 0
-                        if new_val is not None and isinstance(new_val, (int, float)):
-                            setattr(
-                                combined.prompt_tokens_details,
-                                attr,
-                                current_val + new_val,
-                            )
 
             # Handle nested completion_tokens_details
             if (
@@ -2031,23 +2056,19 @@ class BaseTokenUsageProcessor:
                         CompletionTokensDetailsWrapper()
                     )
 
-                # Check what keys exist in the model's completion_tokens_details
-                # Access model_fields on the class, not the instance, to avoid Pydantic 2.11+ deprecation warnings
+                # Iterate through model fields directly (already optimized)
                 for attr in type(usage.completion_tokens_details).model_fields:
-                    if not attr.startswith("_") and not callable(
-                        getattr(usage.completion_tokens_details, attr)
-                    ):
-                        current_val = getattr(
-                            combined.completion_tokens_details, attr, 0
+                    new_val = getattr(usage.completion_tokens_details, attr, None)
+                    if new_val is not None and isinstance(new_val, (int, float)):
+                        current_val = getattr(combined.completion_tokens_details, attr, None)
+                        # Handle None by treating it as 0 for addition
+                        if current_val is None:
+                            current_val = 0
+                        setattr(
+                            combined.completion_tokens_details,
+                            attr,
+                            current_val + new_val,
                         )
-                        new_val = getattr(usage.completion_tokens_details, attr, 0)
-
-                        if new_val is not None and current_val is not None:
-                            setattr(
-                                combined.completion_tokens_details,
-                                attr,
-                                current_val + new_val,
-                            )
 
         return combined
 
