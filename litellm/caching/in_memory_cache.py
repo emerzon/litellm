@@ -10,6 +10,7 @@ Has 4 methods:
 
 import json
 import sys
+import threading
 import time
 import heapq
 from typing import TYPE_CHECKING, Any, List, Optional
@@ -48,6 +49,9 @@ class InMemoryCache(BaseCache):
         self.cache_dict: dict = {}
         self.ttl_dict: dict = {}
         self.expiration_heap: list[tuple[float, str]] = []
+        
+        # Lock for thread-safe increment operations
+        self._increment_lock = threading.Lock()
 
     def check_value_size(self, value: Any):
         """
@@ -228,11 +232,12 @@ class InMemoryCache(BaseCache):
         return return_val
 
     def increment_cache(self, key, value: int, **kwargs) -> int:
-        # get the value
-        init_value = self.get_cache(key=key) or 0
-        value = init_value + value
-        self.set_cache(key, value, **kwargs)
-        return value
+        # Thread-safe atomic increment using lock to prevent race conditions
+        with self._increment_lock:
+            init_value = self.get_cache(key=key) or 0
+            new_value = init_value + value
+            self.set_cache(key, new_value, **kwargs)
+            return new_value
 
     async def async_get_cache(self, key, **kwargs):
         return self.get_cache(key=key, **kwargs)
@@ -245,11 +250,12 @@ class InMemoryCache(BaseCache):
         return return_val
 
     async def async_increment(self, key, value: float, **kwargs) -> float:
-        # get the value
-        init_value = await self.async_get_cache(key=key) or 0
-        value = init_value + value
-        await self.async_set_cache(key, value, **kwargs)
-        return value
+        # Thread-safe atomic increment using lock to prevent race conditions
+        with self._increment_lock:
+            init_value = await self.async_get_cache(key=key) or 0
+            new_value = init_value + value
+            await self.async_set_cache(key, new_value, **kwargs)
+            return new_value
 
     async def async_increment_pipeline(
         self, increment_list: List["RedisPipelineIncrementOperation"], **kwargs
