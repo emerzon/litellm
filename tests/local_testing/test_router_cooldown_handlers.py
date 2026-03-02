@@ -867,3 +867,66 @@ async def test_router_fallbacks_with_cooldowns_and_dynamic_credentials():
         api_key=os.getenv("OPENAI_API_KEY"),
         messages=[{"role": "user", "content": "hi"}],
     )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_failure_tracking():
+    """
+    Test that concurrent failures are tracked correctly without race conditions.
+    This validates the fix for the concurrent failure tracking race condition bug.
+    
+    Reproduces the issue from: [Bug] router concurrent failure tracking lost updates
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from litellm.router_utils.cooldown_handlers import should_cooldown_based_on_allowed_fails_policy
+
+    def create_deployment(model_id: str) -> DeploymentTypedDict:
+        return {
+            "model_name": "gpt-4",
+            "litellm_params": {"model": "openai/gpt-4", "api_key": "fake-key"},
+            "model_info": {"id": model_id},
+        }
+
+    # Create router with low allowed_fails to test cooldown logic
+    router = Router(
+        model_list=[create_deployment("test-deployment-1")],
+        num_retries=0,
+        allowed_fails=5,  # Should cooldown after 6th failure
+    )
+
+    deployment_id = "test-deployment-1"
+    num_concurrent_failures = 20
+
+    class FakeException:
+        status_code = 500
+
+    def simulate_failure():
+        """Simulate a concurrent failure"""
+        should_cooldown = should_cooldown_based_on_allowed_fails_policy(
+            litellm_router_instance=router,
+            deployment=deployment_id,
+            original_exception=FakeException(),
+        )
+        return should_cooldown
+
+    # Execute concurrent failures
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = [executor.submit(simulate_failure) for _ in range(num_concurrent_failures)]
+        results = [f.result() for f in as_completed(futures)]
+
+    # Verify failure tracking
+    final_count = router.failed_calls.get_cache(key=deployment_id) or 0
+
+    print(f"Concurrent failures: {num_concurrent_failures}")
+    print(f"Recorded failures: {final_count}")
+    print(f"Cooldown triggered: {any(results)}")
+
+    # All failures should be recorded (no lost updates)
+    assert final_count == num_concurrent_failures, (
+        f"Race condition detected! Expected {num_concurrent_failures} failures, "
+        f"but only {final_count} were recorded. Lost {num_concurrent_failures - final_count} updates."
+    )
+
+    # Cooldown should have triggered (count exceeded allowed_fails=5)
+    assert any(results), "Cooldown should have been triggered after exceeding allowed_fails"
+

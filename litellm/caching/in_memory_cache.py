@@ -10,6 +10,7 @@ Has 4 methods:
 
 import json
 import sys
+import threading
 import time
 import heapq
 from typing import TYPE_CHECKING, Any, List, Optional
@@ -48,6 +49,12 @@ class InMemoryCache(BaseCache):
         self.cache_dict: dict = {}
         self.ttl_dict: dict = {}
         self.expiration_heap: list[tuple[float, str]] = []
+
+        # Thread-safety: Global lock for cache structure modifications
+        self._cache_lock = threading.Lock()
+        # Per-key locks for atomic increment operations
+        self._key_locks: dict = {}
+        self._key_locks_lock = threading.Lock()
 
     def check_value_size(self, value: Any):
         """
@@ -94,6 +101,16 @@ class InMemoryCache(BaseCache):
         Check if a specific key is expired
         """
         return key in self.ttl_dict and time.time() > self.ttl_dict[key]
+
+    def _get_key_lock(self, key: str) -> threading.Lock:
+        """
+        Get or create a lock for a specific key.
+        This enables fine-grained locking for increment operations.
+        """
+        with self._key_locks_lock:
+            if key not in self._key_locks:
+                self._key_locks[key] = threading.Lock()
+            return self._key_locks[key]
 
     def _remove_key(self, key: str) -> None:
         """
@@ -228,11 +245,17 @@ class InMemoryCache(BaseCache):
         return return_val
 
     def increment_cache(self, key, value: int, **kwargs) -> int:
-        # get the value
-        init_value = self.get_cache(key=key) or 0
-        value = init_value + value
-        self.set_cache(key, value, **kwargs)
-        return value
+        """
+        Atomically increment a cache value.
+        Uses per-key locking to prevent race conditions in concurrent scenarios.
+        """
+        key_lock = self._get_key_lock(key)
+        with key_lock:
+            # Atomic read-modify-write within the lock
+            init_value = self.get_cache(key=key) or 0
+            new_value = init_value + value
+            self.set_cache(key, new_value, **kwargs)
+            return new_value
 
     async def async_get_cache(self, key, **kwargs):
         return self.get_cache(key=key, **kwargs)
@@ -245,11 +268,17 @@ class InMemoryCache(BaseCache):
         return return_val
 
     async def async_increment(self, key, value: float, **kwargs) -> float:
-        # get the value
-        init_value = await self.async_get_cache(key=key) or 0
-        value = init_value + value
-        await self.async_set_cache(key, value, **kwargs)
-        return value
+        """
+        Atomically increment a cache value (async version).
+        Uses per-key locking to prevent race conditions in concurrent scenarios.
+        """
+        key_lock = self._get_key_lock(key)
+        with key_lock:
+            # Atomic read-modify-write within the lock
+            init_value = await self.async_get_cache(key=key) or 0
+            new_value = init_value + value
+            await self.async_set_cache(key, new_value, **kwargs)
+            return new_value
 
     async def async_increment_pipeline(
         self, increment_list: List["RedisPipelineIncrementOperation"], **kwargs
