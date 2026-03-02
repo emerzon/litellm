@@ -25,6 +25,11 @@ from .base_cache import BaseCache
 
 
 class InMemoryCache(BaseCache):
+    # Threshold multiplier for triggering heap compaction
+    # When heap size exceeds (active keys * HEAP_COMPACTION_THRESHOLD), stale entries are removed
+    # A value of 2 means compaction triggers when heap has >100% overhead (i.e., >50% stale entries)
+    HEAP_COMPACTION_THRESHOLD = 2
+
     def __init__(
         self,
         max_size_in_memory: Optional[int] = 200,
@@ -156,6 +161,19 @@ class InMemoryCache(BaseCache):
         else:
             return False
 
+    def _compact_expiration_heap(self) -> None:
+        """
+        Remove stale entries from expiration_heap where the TTL no longer matches ttl_dict.
+        This is needed when keys are updated/refreshed with new TTLs, leaving old heap entries.
+        """
+        valid_entries = [
+            (exp_time, key)
+            for exp_time, key in self.expiration_heap
+            if self.ttl_dict.get(key) == exp_time
+        ]
+        heapq.heapify(valid_entries)
+        self.expiration_heap = valid_entries
+
     def set_cache(self, key, value, **kwargs):
         # Handle the edge case where max_size_in_memory is 0
         if self.max_size_in_memory == 0:
@@ -175,6 +193,11 @@ class InMemoryCache(BaseCache):
             else:
                 self.ttl_dict[key] = time.time() + self.default_ttl
                 heapq.heappush(self.expiration_heap, (self.ttl_dict[key], key))
+            
+            # Compact heap periodically to prevent unbounded growth from expired key refreshes
+            # When heap grows significantly larger than active keys, remove stale entries
+            if len(self.expiration_heap) > len(self.ttl_dict) * self.HEAP_COMPACTION_THRESHOLD:
+                self._compact_expiration_heap()
 
     async def async_set_cache(self, key, value, **kwargs):
         self.set_cache(key=key, value=value, **kwargs)
