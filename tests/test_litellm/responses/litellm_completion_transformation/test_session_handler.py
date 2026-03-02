@@ -414,3 +414,92 @@ async def test_get_chat_completion_message_history_empty_response_dict():
         
         # Verify the session was still created correctly
         assert result["litellm_session_id"] == "test-session"
+
+
+@pytest.mark.asyncio
+async def test_parallel_processing_of_spend_logs():
+    """
+    Test that spend logs are processed in parallel, not serially.
+    This test validates the fix for parallel processing of spend logs to reduce latency.
+    
+    The test uses simulated I/O delays to verify that multiple spend logs are
+    processed concurrently rather than sequentially, reducing overall latency.
+    """
+    import asyncio
+    import time
+    
+    # Track call timing to verify parallel execution
+    call_times = []
+    
+    async def mock_extend_with_timing(spend_log, chat_completion_message_history):
+        """Mock that simulates async I/O and tracks timing"""
+        start_time = time.perf_counter()
+        call_times.append(start_time)
+        
+        # Simulate async I/O operation (e.g., cold storage fetch)
+        await asyncio.sleep(0.05)
+        
+        # Add a message for this spend log
+        chat_completion_message_history.append({
+            "role": "user" if spend_log["id"] % 2 == 0 else "assistant",
+            "content": f"Message {spend_log['id']}"
+        })
+        return chat_completion_message_history
+    
+    # Create mock spend logs
+    mock_spend_logs = [
+        {
+            "id": i,
+            "session_id": "parallel-test-session",
+            "proxy_server_request": {},
+            "response": {}
+        }
+        for i in range(10)
+    ]
+    
+    with patch.object(
+        ResponsesSessionHandler,
+        "get_all_spend_logs_for_previous_response_id",
+        new_callable=AsyncMock,
+    ) as mock_get_spend_logs, \
+    patch.object(
+        ResponsesSessionHandler,
+        "extend_chat_completion_message_with_spend_log_payload",
+        new_callable=AsyncMock,
+        side_effect=mock_extend_with_timing
+    ):
+        mock_get_spend_logs.return_value = mock_spend_logs
+        
+        # Clear call times
+        call_times.clear()
+        
+        # Measure total execution time
+        start_time = time.perf_counter()
+        result = await ResponsesSessionHandler.get_chat_completion_message_history_for_previous_response_id(
+            "parallel-test-id"
+        )
+        elapsed_time = time.perf_counter() - start_time
+        
+        # Verify results
+        assert len(result["messages"]) == 10
+        assert result["litellm_session_id"] == "parallel-test-session"
+        
+        # Key assertion: With parallel processing, total time should be close to
+        # a single operation (0.05s) rather than 10 operations in series (0.5s)
+        # Allow some overhead, but should be much less than serial processing
+        assert elapsed_time < 0.2, (
+            f"Processing appears to be serial. "
+            f"Expected < 0.2s for parallel execution, got {elapsed_time:.3f}s. "
+            f"Serial execution would take ~0.5s for 10 logs with 0.05s delay each."
+        )
+        
+        # Additional verification: Check that calls started at similar times
+        # (within a small window), indicating concurrent execution
+        if len(call_times) >= 2:
+            # All calls should start within a reasonable time window (e.g., 0.1s)
+            # if they're truly concurrent. Using 0.1s to be robust on slower systems.
+            time_spread = max(call_times) - min(call_times)
+            assert time_spread < 0.1, (
+                f"Calls not starting concurrently. "
+                f"Time spread between first and last call: {time_spread:.3f}s"
+            )
