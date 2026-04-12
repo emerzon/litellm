@@ -199,3 +199,66 @@ def test_in_memory_cache_heap_size_staus_bounded():
 
     # Expiration heap should only have 1 entry
     assert len(in_memory_cache.expiration_heap) == 1
+
+
+def test_in_memory_cache_concurrent_increment():
+    """
+    Test that concurrent increment operations are thread-safe and don't lose updates.
+    This test validates the fix for the race condition in concurrent failure tracking.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    in_memory_cache = InMemoryCache()
+    test_key = "concurrent_test_key"
+    num_threads = 50
+    increments_per_thread = 20
+
+    def increment_worker():
+        for _ in range(increments_per_thread):
+            in_memory_cache.increment_cache(key=test_key, value=1, ttl=60)
+
+    # Run concurrent increments
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = [executor.submit(increment_worker) for _ in range(num_threads)]
+        for future in as_completed(futures):
+            future.result()  # Wait for all to complete
+
+    # Verify all increments were recorded
+    expected_count = num_threads * increments_per_thread
+    actual_count = in_memory_cache.get_cache(key=test_key)
+
+    assert actual_count == expected_count, (
+        f"Race condition detected! Expected {expected_count} increments, "
+        f"but got {actual_count}. Lost {expected_count - actual_count} updates."
+    )
+
+
+@pytest.mark.asyncio
+async def test_in_memory_cache_async_concurrent_increment():
+    """
+    Test that concurrent async increment operations are thread-safe.
+    """
+    import asyncio
+
+    in_memory_cache = InMemoryCache()
+    test_key = "async_concurrent_test_key"
+    num_tasks = 50
+    increments_per_task = 20
+
+    async def increment_worker():
+        for _ in range(increments_per_task):
+            await in_memory_cache.async_increment(key=test_key, value=1, ttl=60)
+
+    # Run concurrent async increments
+    tasks = [increment_worker() for _ in range(num_tasks)]
+    await asyncio.gather(*tasks)
+
+    # Verify all increments were recorded
+    expected_count = num_tasks * increments_per_task
+    actual_count = await in_memory_cache.async_get_cache(key=test_key)
+
+    assert actual_count == expected_count, (
+        f"Race condition detected! Expected {expected_count} increments, "
+        f"but got {actual_count}. Lost {expected_count - actual_count} updates."
+    )
+
