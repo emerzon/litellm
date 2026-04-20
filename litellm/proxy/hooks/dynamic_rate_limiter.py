@@ -187,7 +187,9 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
                     str(e)
                 )
             )
-            return None, None, None, None, None
+            # Re-raise the exception to fail closed (reject request on error)
+            # This prevents bypassing rate limits when cache backend is down
+            raise e
 
     async def async_pre_call_hook(
         self,
