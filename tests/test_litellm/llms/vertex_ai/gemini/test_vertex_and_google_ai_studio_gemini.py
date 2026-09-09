@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 from copy import deepcopy
-from typing import Final, List, cast
+from typing import Final, List, Literal, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 import litellm
 from litellm import ModelResponse, completion
+from litellm.caching.caching import Cache
 from litellm.llms.gemini.chat.transformation import GoogleAIStudioGeminiConfig
 from litellm.llms.vertex_ai.common_utils import VertexAIError
 from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import (
@@ -1217,6 +1218,65 @@ def test_vertex_ai_map_tools():
     print(new_tools)
 
     assert tools == new_tools
+
+
+@pytest.mark.parametrize("config_type", [VertexGeminiConfig, GoogleAIStudioGeminiConfig])
+@pytest.mark.parametrize("parameter", ["tools", "functions"])
+@pytest.mark.parametrize("schema_options", ["strict", "additionalProperties", "both"])
+def test_gemini_tool_mapping_preserves_input_and_cache_key(
+    config_type: type[VertexGeminiConfig],
+    parameter: Literal["tools", "functions"],
+    schema_options: Literal["strict", "additionalProperties", "both"],
+) -> None:
+    strict: Final = {"strict": True} if schema_options != "additionalProperties" else {}
+    additional: Final = {"additionalProperties": False} if schema_options != "strict" else {}
+    item_schema: Final = {
+        "type": "object",
+        "properties": {"location": {"type": "string"}},
+        "required": ["location"],
+    }
+    function: Final = {
+        "name": "get_weather",
+        **strict,
+        "parameters": {
+            "type": "object",
+            **additional,
+            "properties": {
+                "locations": {
+                    "type": "array",
+                    "items": {**item_schema, **strict, **additional},
+                }
+            },
+            "required": ["locations"],
+        },
+    }
+    definitions: Final = [{"type": "function", "function": function}] if parameter == "tools" else [function]
+    original: Final = deepcopy(definitions)
+    request: Final = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "Get the weather in Paris"}],
+        parameter: definitions,
+    }
+    cache: Final = Cache(type="local")
+    lookup_key: Final = cache.get_cache_key(**request)
+
+    mapped: Final = config_type().map_openai_params(
+        non_default_params={parameter: definitions},
+        optional_params={},
+        model="gemini-3.8-flash",
+        drop_params=False,
+    )
+
+    assert cache.get_cache_key(**request) == lookup_key
+    assert definitions == original
+    declaration: Final = mapped["tools"][0]["function_declarations"][0]
+    assert declaration["name"] == "get_weather"
+    assert "strict" not in declaration
+    assert declaration["parameters"] == {
+        "type": "object",
+        "properties": {"locations": {"type": "array", "items": item_schema}},
+        "required": ["locations"],
+    }
 
 
 def test_vertex_ai_map_tool_with_anyof():
